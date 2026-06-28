@@ -1,12 +1,15 @@
 """Extract PASE+ frame features for MSP-PODCAST 149K utterances.
 
-For each .wav, runs PASE+ frontend → (256, T_100hz) → average-pool by 2 along
-time → (T_50hz, 256) → save as .npy. Matches CARE paper Sec III-B:
-    "These features are down-sampled by a factor of 2, producing target
-     descriptors at a frequency of 50 Hz."
+For each .wav, runs PASE+ frontend → (256, T_100hz) → saves as .npy in
+**(D=256, T_100hz)** layout to match CARE's `dataset_pase.py` loading:
+
+    feat = np.load(npy_path).T[::2, :]  # (D,T) → (T,D) → (T/2,D) at 50 Hz
+
+CARE does the downsample itself; if we downsample here too, the loader
+would slice it AGAIN and we'd end up at 25 Hz (wrong).
 
 Output layout (one file per utterance, ready for CARE training):
-    {out_dir}/{utt_id}.npy   shape (T_50hz, 256), float32
+    {out_dir}/{utt_id}.npy   shape (256, T_100hz), float32
 
 Usage:
     # On the cluster, in `care` conda env:
@@ -70,8 +73,8 @@ def _extract_batch(
     audios: List[np.ndarray],
     device: torch.device,
 ) -> List[np.ndarray]:
-    """PASE+ forward + downsample by 2 → list of (T_50hz, 256) numpy arrays."""
-    # Pad to max length in batch
+    """PASE+ forward at native 100 Hz → list of (256, T_100hz) numpy arrays
+    (no downsample here — CARE's dataset_pase.py does `.T[::2, :]` itself)."""
     lens = [a.shape[0] for a in audios]
     max_len = max(lens)
     padded = np.zeros((len(audios), 1, max_len), dtype=np.float32)
@@ -80,16 +83,11 @@ def _extract_batch(
     x = torch.from_numpy(padded).to(device)
 
     feats = fe(x)   # (B, 256, T_100hz)
-    # Downsample by 2 (avg pool) along time → (B, 256, T_50hz)
-    feats = F.avg_pool1d(feats, kernel_size=2, stride=2)
-    feats = feats.transpose(1, 2).contiguous()   # (B, T_50hz, 256)
-
     out: List[np.ndarray] = []
     for i, raw_len in enumerate(lens):
-        # PASE+ output frame rate ≈ raw_len / 160 (16kHz audio @ 100Hz frames)
-        # After downsample by 2: raw_len / 320
-        valid_T = max(1, raw_len // 320)
-        out.append(feats[i, :valid_T].detach().cpu().to(torch.float32).numpy())
+        # PASE+ output frame rate ≈ raw_len / 160 (16kHz audio @ 100Hz frames).
+        valid_T = max(1, raw_len // 160)
+        out.append(feats[i, :, :valid_T].detach().cpu().to(torch.float32).numpy())
     return out
 
 

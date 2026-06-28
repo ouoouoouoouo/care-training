@@ -34,12 +34,17 @@ This repo:
 | Phase | Task | Time | Status |
 |-------|------|------|--------|
 | 1 | Set up `care` conda env + clone CARE + PASE+ + patch torchqrnn | 1 hr | ✅ done |
-| 2 | Extract PASE+ features for 149K MSP-PODCAST (256-dim @ 50Hz) | 4-8 hr GPU | in progress |
-| 3 | Extract WavLM-base frame features for 149K MSP-PODCAST | 2-4 hr GPU | todo |
-| 4 | Extract RoBERTa-base mean-pool features from Whisper transcripts | 30 min | todo |
-| 5 | Convert transcripts CSV → JSON, build train/val pickle splits | 10 min | todo |
-| 6 | Modify CARE config.py, run pretraining (200K-800K steps) | 2-3 days | todo |
+| 2 | Extract PASE+ features for 149K MSP-PODCAST | 4-8 hr GPU | script ready |
+| 3 | (Optional) Extract WavLM-base frame features | 2-4 hr GPU | script ready, skip-able |
+| 4 | Extract RoBERTa-base mean-pool features from Whisper transcripts | 30 min | script ready |
+| 5 | Convert transcripts CSV → JSON, build train/val pickle splits | 10 min | script ready |
+| 6 | Modify CARE config.py + dataset_pase.py, run pretraining (200K-800K steps) | 2-3 days | todo |
 | 7 | Wrap trained CARE encoder → use in downstream audio pipeline | 1 hr | todo |
+
+> **Why Phase 3 is optional**: CARE's `dataset_pase.py` loads `wavlm_tokens` but
+> never actually uses them in `__getitem__` (dead code path). We can provide
+> a placeholder text file via `prepare_care_inputs.py --include-wavlm-tokens-stub`
+> and patch the dataset class in Phase 6 to skip the load entirely.
 
 See [docs/SETUP_zh.md](docs/SETUP_zh.md) for step-by-step instructions (中文).
 
@@ -98,9 +103,52 @@ python care-training/scripts/extract_msp_pase_features.py \
 
 Output: `~/care_training/data/pase_features/{utt_id}.npy` each `(T_50hz, 256)`.
 
-### Phase 3-7
+### Phase 4 — Extract RoBERTa-base mean-pool features (semantic supervision target)
 
-(Scripts to be added — see [ROADMAP](#roadmap-7-phases).)
+Reuses the Whisper transcripts CSV from your `merits-l-text` reproduction.
+
+```bash
+python care-training/scripts/extract_msp_roberta_mean.py \
+    --transcripts-csv /home/ouo/merits-l-text/data/manifests/msp_podcast/transcripts.csv \
+    --out-dir /home/ouo/care_training/data/roberta_features \
+    --model roberta-base \
+    --batch-size 64
+```
+
+Output: `~/care_training/data/roberta_features/{utt_id}_text.npy` each `(768,)`.
+
+### Phase 5 — Prepare CARE inputs (JSON + train/val pickle + wavlm_tokens stub)
+
+```bash
+python care-training/scripts/prepare_care_inputs.py \
+    --transcripts-csv /home/ouo/merits-l-text/data/manifests/msp_podcast/transcripts.csv \
+    --out-dir /home/ouo/care_training/data \
+    --val-fraction 0.20 --seed 42 \
+    --include-wavlm-tokens-stub
+```
+
+Output:
+- `~/care_training/data/whisper_transcripts.json`
+- `~/care_training/data/trainlist.pkl` / `vallist.pkl`
+- `~/care_training/data/wavlm_tokens.txt` (placeholder; ignored after Phase 6 patches)
+
+### Phase 3 — (Optional) Extract WavLM-base frame features
+
+Only run if you decide to use real WavLM tokens (e.g. cluster them yourself).
+Otherwise the Phase 5 stub is enough.
+
+```bash
+python care-training/scripts/extract_msp_wavlm_frame.py \
+    --audio-root /home/ouo/dataset/MSP_Podcast/Audios \
+    --reference-dir /home/ouo/dataset/MSP_Podcast/Transcripts \
+    --out-dir /home/ouo/care_training/data/wavlm_features \
+    --model microsoft/wavlm-base \
+    --batch-size 8
+```
+
+### Phase 6 — Modify CARE config + train (TBD)
+
+### Phase 7 — Integrate trained CARE into audio pipeline (TBD)
 
 ---
 
