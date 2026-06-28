@@ -1,0 +1,49 @@
+# care env requirements
+#
+# IMPORTANT: install torch with --index-url FIRST, then this file:
+#   pip install "torch>=2.6" "torchaudio>=2.6" torchvision \
+#       --index-url https://download.pytorch.org/whl/cu124
+#   pip install -r requirements.txt
+#
+# Blackwell GPU users need cu128 wheels and torch 2.7+ — see README §3.
+
+# Core (torch already installed via index-url)
+torch>=2.6.0
+torchaudio>=2.6.0
+torchvision>=0.21.0
+
+# HuggingFace stack (RoBERTa-base, WavLM-base)
+transformers>=4.40.0
+accelerate>=0.30.0
+tokenizers>=0.15.0
+
+# Audio I/O
+soundfile>=0.12
+librosa>=0.10
+numpy>=1.24
+
+# General
+pandas>=2.0
+scikit-learn>=1.3
+scipy
+pyyaml>=6.0
+tqdm>=4.66
+
+# Logging
+tensorboard>=2.14
+wandb>=0.16
+
+# PASE+ frontend deps (pure-python only, no ancient CUDA libs)
+matplotlib
+tensorboardX
+gammatone
+
+# QRNN (for PASE+ recurrent layer); cupy fallback covered by patch
+--no-deps git+https://github.com/salesforce/pytorch-qrnn.git
+cupy-cuda12x   # used by patched torchqrnn; safe even without GPU kernel path
+
+# Optional acoustic-target alternative (CARE-eGeMAPS path)
+opensmile
+
+# Google Drive downloader (for PASE+ FE_e199.ckpt)
+gdown

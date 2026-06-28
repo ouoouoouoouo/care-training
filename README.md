@@ -1,0 +1,166 @@
+# CARE training — MERITS-L audio backbone
+
+Scripts to train **CARE** (Content and Acoustic Representations of Emotions)
+from scratch on MSP-PODCAST, as the audio encoder for the
+[MERITS-L paper](https://arxiv.org/abs/2407.07198) reproduction in
+[merits-l-text](https://github.com/ouoouoouoouo/merits-l-text).
+
+CARE paper: Dutta & Ganapathy, *"Leveraging Content and Acoustic Representations
+for Speech Emotion Recognition"* ([arXiv 2409.05566](https://arxiv.org/abs/2409.05566)).
+
+Official CARE repo: [iiscleap/CARE](https://github.com/iiscleap/CARE).
+We use it as-is for training (with patches), and provide the feature-extraction
+pipeline + integration scripts here.
+
+---
+
+## Why this repo
+
+The official CARE repo (`iiscleap/CARE`):
+- Doesn't release pretrained weights → must train from scratch
+- Was last touched 2024, dependencies are old
+- Uses **OpenSMILE** for acoustic supervision in code, but the **paper** uses **PASE+**
+
+This repo:
+- Patches the broken dependencies (`pynvrtc`, `cupy`, `torchqrnn` chain)
+- Pre-computes everything CARE training needs (PASE+, WavLM-base, RoBERTa, transcripts)
+- Provides scripts to use the trained CARE checkpoint downstream in our existing
+  audio Stage I / II / III pipeline
+
+---
+
+## Roadmap (7 phases)
+
+| Phase | Task | Time | Status |
+|-------|------|------|--------|
+| 1 | Set up `care` conda env + clone CARE + PASE+ + patch torchqrnn | 1 hr | ✅ done |
+| 2 | Extract PASE+ features for 149K MSP-PODCAST (256-dim @ 50Hz) | 4-8 hr GPU | in progress |
+| 3 | Extract WavLM-base frame features for 149K MSP-PODCAST | 2-4 hr GPU | todo |
+| 4 | Extract RoBERTa-base mean-pool features from Whisper transcripts | 30 min | todo |
+| 5 | Convert transcripts CSV → JSON, build train/val pickle splits | 10 min | todo |
+| 6 | Modify CARE config.py, run pretraining (200K-800K steps) | 2-3 days | todo |
+| 7 | Wrap trained CARE encoder → use in downstream audio pipeline | 1 hr | todo |
+
+See [docs/SETUP_zh.md](docs/SETUP_zh.md) for step-by-step instructions (中文).
+
+---
+
+## Quickstart
+
+### Prerequisites
+
+- Conda env named `care` with Python 3.10
+- CUDA 12.x driver, RTX 4090 (or similar; **NOT** Blackwell — PyTorch 2.6 yet)
+- MSP-PODCAST audio at `/home/ouo/dataset/MSP_Podcast/Audios/`
+- MSP-PODCAST transcripts at `/home/ouo/dataset/MSP_Podcast/Transcripts/`
+
+### Setup env + repos
+
+```bash
+mkdir -p /home/ouo/care_training && cd /home/ouo/care_training
+
+# Clone this repo
+git clone https://github.com/<your-handle>/care-training.git
+
+# Clone CARE (official)
+git clone https://github.com/iiscleap/CARE.git
+
+# Clone PASE+ and download checkpoint
+git clone https://github.com/santi-pdp/pase.git
+cd pase
+pip install gdown
+gdown 1xwlZMGnEt9bGKCVcqDeNrruLFQW5zUEW -O FE_e199.ckpt
+cd ..
+
+# Install env
+conda activate care
+pip install -r care-training/requirements.txt
+
+# Apply patches (cupy/pynvrtc workaround for torchqrnn)
+bash care-training/patches/apply_torchqrnn_patches.sh
+```
+
+### Phase 2 — Extract PASE+ features
+
+```bash
+export CUDA_VISIBLE_DEVICES=0   # pick a non-Blackwell GPU
+
+python care-training/scripts/extract_msp_pase_features.py \
+    --pase-repo /home/ouo/care_training/pase \
+    --pase-ckpt /home/ouo/care_training/pase/FE_e199.ckpt \
+    --pase-cfg  /home/ouo/care_training/pase/cfg/frontend/PASE+.cfg \
+    --audio-root /home/ouo/dataset/MSP_Podcast/Audios \
+    --reference-dir /home/ouo/dataset/MSP_Podcast/Transcripts \
+    --out-dir /home/ouo/care_training/data/pase_features \
+    --batch-size 8 \
+    --device cuda
+```
+
+Output: `~/care_training/data/pase_features/{utt_id}.npy` each `(T_50hz, 256)`.
+
+### Phase 3-7
+
+(Scripts to be added — see [ROADMAP](#roadmap-7-phases).)
+
+---
+
+## Storage estimate
+
+| Item | Size |
+|------|------|
+| PASE+ features (149K × 250 frames × 256) | ~40 GB |
+| WavLM-base frame features (149K × 250 frames × 768 × 13 layers) | ~1.5 TB ⚠️ |
+| RoBERTa mean-pool features (149K × 768) | ~460 MB |
+| CARE checkpoints | ~2 GB |
+
+⚠️ The WavLM frame features are HUGE. Phase 3 may need to store only what CARE's
+`dataset_pase.py` actually reads (likely just conv extractor + 6 common layers,
+not all 13). TBD when we get to Phase 3.
+
+---
+
+## Critical decisions (and our choices)
+
+| Decision | Paper says | Code does | We choose |
+|----------|------------|-----------|-----------|
+| Acoustic target | PASE+ (256-dim) | OpenSMILE eGeMAPS | **PASE+** (faithful to paper) |
+| Pre-training steps | 200K | 800K | **200K with early-stop** |
+| ASR for transcripts | Whisper-large-v3 | (same) | **Whisper-large-v3** (reuse our merits-l-text transcripts) |
+| Audio crop | 5 sec | 5 sec | 5 sec |
+| Optimizer | AdamW, lr=1e-5, batch=128 | (same) | (same) |
+
+---
+
+## Known issues / patches
+
+### 1. `torchqrnn` needs `cupy` + `pynvrtc` (yanked from PyPI)
+
+PASE+ frontend uses QRNN as its final layer. QRNN's `forget_mult.py` imports
+`cupy.cuda.function` and `pynvrtc.compiler.Program` at module top, both of
+which are unavailable on modern setups.
+
+**Fix**: `patches/apply_torchqrnn_patches.sh` makes those imports optional and
+forces `ForgetMult.forward` to use the pure-PyTorch `CPUForgetMult` path (which
+works on GPU tensors too, just slower than the fused CUDA kernel).
+
+### 2. PASE+ `requirements.txt` is ancient
+
+Pinning `numpy==1.16.4`, `torchaudio==0.4.0`, `cupy-cuda101`, etc. — completely
+incompatible with PyTorch 2.6 + Python 3.10.
+
+**Fix**: Don't `pip install -r pase/requirements.txt`. Just install minimum
+dependencies (`gammatone`, `torchvision`, `cupy-cuda12x`) and patch torchqrnn.
+
+### 3. Blackwell GPUs (sm_120) not fully supported by PyTorch 2.6
+
+Warning: `NVIDIA RTX PRO 5000 Blackwell ... is not compatible with current
+PyTorch`. Code runs but numerical diff between CPU/GPU is ~0.01.
+
+**Fix**: Use a non-Blackwell GPU (RTX 4090 = sm_89) via `CUDA_VISIBLE_DEVICES`,
+or upgrade to PyTorch 2.7+ / nightly with cu128.
+
+---
+
+## License
+
+MIT.

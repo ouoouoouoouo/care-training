@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# CARE training outputs (huge)
+data/
+features/
+*.npy
+*.pt
+*.bin
+*.ckpt
+*.tar
+outputs/
+ckpts/
+runs/
+wandb/
+logs/
+
+# PASE+ source (clone separately, don't commit)
+pase/
+pase_repo/
+
+# CARE source (clone separately)
+CARE/
+care_repo/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local notes
+NOTES.md
+TODO.md
