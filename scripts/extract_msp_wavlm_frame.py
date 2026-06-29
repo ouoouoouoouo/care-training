@@ -53,13 +53,23 @@ def _list_audio_files(audio_root: Path) -> List[Path]:
     return sorted(p for p in audio_root.rglob("*") if p.suffix.lower() in AUDIO_EXTS)
 
 
+try:
+    import librosa as _librosa
+    _HAS_LIBROSA = True
+except ImportError:
+    _HAS_LIBROSA = False
+
+
 def _read_wav(path: Path, sr: int = 16000) -> np.ndarray:
     audio, file_sr = sf.read(str(path))
-    if file_sr != sr:
-        raise ValueError(f"{path}: expected {sr} Hz, got {file_sr}")
     if audio.ndim > 1:
         audio = audio.mean(axis=1)
-    return audio.astype(np.float32)
+    audio = audio.astype(np.float32)
+    if file_sr != sr:
+        if not _HAS_LIBROSA:
+            raise RuntimeError(f"{path}: sr={file_sr} != {sr}; install librosa to resample")
+        audio = _librosa.resample(audio, orig_sr=file_sr, target_sr=sr).astype(np.float32)
+    return audio
 
 
 @torch.no_grad()

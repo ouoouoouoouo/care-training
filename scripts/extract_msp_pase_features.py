@@ -38,6 +38,12 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
+try:
+    import librosa
+    _HAS_LIBROSA = True
+except ImportError:
+    _HAS_LIBROSA = False
+
 AUDIO_EXTS = (".wav", ".flac")
 
 
@@ -60,11 +66,17 @@ def _list_audio_files(audio_root: Path) -> List[Path]:
 
 def _read_wav(path: Path, target_sr: int = 16000) -> np.ndarray:
     audio, sr = sf.read(str(path))
-    if sr != target_sr:
-        raise ValueError(f"{path}: expected {target_sr} Hz, got {sr} Hz")
     if audio.ndim > 1:
         audio = audio.mean(axis=1)
-    return audio.astype(np.float32)
+    audio = audio.astype(np.float32)
+    if sr != target_sr:
+        if not _HAS_LIBROSA:
+            raise RuntimeError(
+                f"{path}: sr={sr} != {target_sr} and librosa is not installed for resample. "
+                f"Run: pip install librosa"
+            )
+        audio = librosa.resample(audio, orig_sr=sr, target_sr=target_sr).astype(np.float32)
+    return audio
 
 
 @torch.no_grad()
