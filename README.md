@@ -146,9 +146,76 @@ python care-training/scripts/extract_msp_wavlm_frame.py \
     --batch-size 8
 ```
 
-### Phase 6 — Modify CARE config + train (TBD)
+### Phase 6 — Apply patches + launch training
 
-### Phase 7 — Integrate trained CARE into audio pipeline (TBD)
+#### 6.1 Generate text_labels.json from your MERITS-L pseudo-labels
+
+```bash
+python care-training/scripts/prepare_care_text_labels.py \
+    --pseudo-labels-csv /home/ouo/merits-l-text/data/manifests/msp_podcast/pseudo_labels.csv \
+    --out-json /home/ouo/care_training/data/text_labels.json
+```
+
+Maps GPT-3.5 labels (negative/neutral/positive → 0/1/2).
+
+#### 6.2 Apply patches to CARE source
+
+```bash
+bash care-training/patches/apply_care_patches.sh /home/ouo/care_training/CARE
+```
+
+What it does:
+- Replaces `config.py` with paths to your `/home/ouo/care_training/data/`.
+- Patches `dataset_pase.py`: `pickle5`→`pickle`, removes `<100` token filter,
+  tolerates missing `roberta_logits`.
+- Patches `train_pase.py`: enables cuDNN benchmark + disables anomaly detection
+  (~2× speedup), adds optional WandB logging, saves `state_dict` not full model,
+  saves `best.pth` whenever val loss improves.
+
+All originals backed up to `*.bak` files — revert with `mv config.py.bak config.py` etc.
+
+#### 6.3 Smoke test (50-100 steps, single GPU)
+
+```bash
+export CUDA_VISIBLE_DEVICES=0   # RTX 4090
+export WANDB_API_KEY=...         # optional
+conda activate care
+
+cd /home/ouo/care_training/CARE/pretraining
+
+# Quick sanity (training will checkpoint at 10000 steps; Ctrl+C earlier to stop)
+python train_pase.py /home/ouo/care_training/ckpts_smoketest \
+    --batch_size 16
+```
+
+Watch for:
+- ✅ Dataset loads without crash (no KeyError on text_labels / wavlm_tokens)
+- ✅ Forward pass works, both losses produce numbers (not NaN)
+- ✅ Loss values **decrease** over first few hundred steps
+- ✅ GPU memory usage reasonable (4090 has 24GB; batch=16 should fit)
+
+#### 6.4 Full training (200K-800K steps)
+
+```bash
+tmux new -s care_train
+export CUDA_VISIBLE_DEVICES=0
+export WANDB_API_KEY=$(python -c "import netrc; print(netrc.netrc().hosts['api.wandb.ai'][2])")
+conda activate care
+
+cd /home/ouo/care_training/CARE/pretraining
+python train_pase.py /home/ouo/care_training/ckpts \
+    --batch_size 32 \
+    --num_layers 6 \
+    --pool_fn avg
+```
+
+Detach with `Ctrl+B D`. Expected runtime on single RTX 4090:
+- 200K steps (paper-reported): ~1.5-2 days
+- 800K steps (release code default): ~6-8 days
+
+Stop with `Ctrl+C` once val loss plateaus. Final model: `ckpts/best.pth`.
+
+### Phase 7 — Integrate trained CARE into audio pipeline (TBD after Phase 6)
 
 ---
 
