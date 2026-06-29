@@ -42,7 +42,7 @@ echo ""
 # Step 2: patch dataset_pase.py
 # ----------------------------------------------------------------------------
 echo "Step 2: patching dataset_pase.py ..."
-DATASET="${PT_DIR}/dataset_pase.py"
+export DATASET="${PT_DIR}/dataset_pase.py"
 [[ -f "${DATASET}.bak" ]] || cp "$DATASET" "${DATASET}.bak"
 
 python << 'PY'
@@ -113,7 +113,7 @@ echo ""
 # Step 3: patch train_pase.py
 # ----------------------------------------------------------------------------
 echo "Step 3: patching train_pase.py ..."
-TRAIN="${PT_DIR}/train_pase.py"
+export TRAIN="${PT_DIR}/train_pase.py"
 [[ -f "${TRAIN}.bak" ]] || cp "$TRAIN" "${TRAIN}.bak"
 
 python << 'PY'
